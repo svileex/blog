@@ -1,6 +1,7 @@
-package storage
+package mapstorage
 
 import (
+	"blog/internal/microblog/storage"
 	"errors"
 	"strconv"
 	"sync"
@@ -9,13 +10,13 @@ import (
 type mapStorage struct {
 	usersMu sync.RWMutex
 	usersId int
-	users   []User
+	users   []storage.User
 	postsMu sync.RWMutex
 	postsId int
-	posts   []Post
+	posts   []storage.Post
 }
 
-func (m *mapStorage) AddPost(post *Post) error {
+func (m *mapStorage) AddPost(post *storage.Post) error {
 	m.postsMu.Lock()
 	post.Id = strconv.Itoa(m.postsId)
 	m.posts = append(m.posts, *post)
@@ -25,7 +26,7 @@ func (m *mapStorage) AddPost(post *Post) error {
 	return nil
 }
 
-func (m *mapStorage) AddUser(newUser *User) error {
+func (m *mapStorage) AddUser(newUser *storage.User) error {
 	m.usersMu.Lock() // TODO: lock guard? Normal usage of mutex
 
 	for _, user := range m.users {
@@ -42,7 +43,7 @@ func (m *mapStorage) AddUser(newUser *User) error {
 	return nil
 }
 
-func (m *mapStorage) GetPost(id string) (Post, error) {
+func (m *mapStorage) GetPost(id string) (storage.Post, error) {
 	m.postsMu.RLock()
 	for _, p := range m.posts {
 		if p.Id == id {
@@ -52,7 +53,7 @@ func (m *mapStorage) GetPost(id string) (Post, error) {
 	}
 	m.postsMu.RUnlock()
 
-	return *NewPost(), errors.New("not found")
+	return *storage.NewPost(), errors.New("not found")
 }
 
 func (m *mapStorage) GetUser(id string) error {
@@ -74,13 +75,13 @@ func NewMapStorage() *mapStorage {
 	return &mapStorage{
 		sync.RWMutex{},
 		0,
-		make([]User, 0),
+		make([]storage.User, 0),
 		sync.RWMutex{},
 		0,
-		make([]Post, 0)}
+		make([]storage.Post, 0)}
 }
 
-func (m *mapStorage) GetUserByLogin(targetLogin string) (User, error) {
+func (m *mapStorage) GetUserByLogin(targetLogin string) (storage.User, error) {
 	m.postsMu.RLock()
 	for _, user := range m.users {
 		if user.Login == targetLogin {
@@ -89,11 +90,11 @@ func (m *mapStorage) GetUserByLogin(targetLogin string) (User, error) {
 	}
 	m.postsMu.RUnlock()
 
-	return User{"", "", make([]byte, 0)}, nil // return pointer?
+	return storage.User{"", "", make([]byte, 0)}, nil // return pointer?
 }
 
 // TODO: normal interface what is GetUser?
-func (m *mapStorage) GetUserById(targetId string) (User, error) {
+func (m *mapStorage) GetUserById(targetId string) (storage.User, error) {
 	m.usersMu.RLock()
 	for _, user := range m.users {
 		if string(user.Id) == targetId {
@@ -103,12 +104,12 @@ func (m *mapStorage) GetUserById(targetId string) (User, error) {
 	}
 	m.usersMu.RUnlock()
 
-	return User{"", "", make([]byte, 0)}, nil // return pointer?
+	return storage.User{"", "", make([]byte, 0)}, nil // return pointer?
 }
 
-func (m *mapStorage) GetAllPostsOfUser(id string) ([]Post, error) {
+func (m *mapStorage) GetAllPostsOfUser(id string) ([]storage.Post, error) {
 	m.postsMu.RLock()
-	posts := make([]Post, 0)
+	posts := make([]storage.Post, 0)
 
 	for i := len(m.posts) - 1; i >= 0; i-- {
 		if m.posts[i].AuthorId == id { //TODO: id from string
