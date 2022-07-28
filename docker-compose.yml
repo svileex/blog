@@ -1,0 +1,13 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mongo
+    environment:
+      MONGO_URL: "mongodb://mongo:27017/"
+  mongo:
+    image: "mongo"
+    ports:
+      - "27017:27017"
