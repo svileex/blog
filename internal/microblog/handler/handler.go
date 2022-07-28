@@ -25,7 +25,6 @@ func NewHandler(s *storage.Storage) *Handler {
 	return &Handler{s: s}
 }
 
-// TODO: validation in storage
 func validateUserLogin(user storage.User) error {
 	matched, err := regexp.Match(`^[a-z]+$`, []byte(user.Login))
 
@@ -47,7 +46,7 @@ func writeErrorToResponse(w *http.ResponseWriter, statusCode int, errorMsg strin
 	writeJsonToResponse(w, statusCode, resp)
 }
 
-func (h *Handler) RegisterNewUser(w http.ResponseWriter, req *http.Request) {
+func (h Handler) RegisterNewUser(w http.ResponseWriter, req *http.Request) {
 	reqBody, err := io.ReadAll(req.Body)
 
 	if err != nil {
@@ -67,7 +66,6 @@ func (h *Handler) RegisterNewUser(w http.ResponseWriter, req *http.Request) {
 	pwdHash, _ := bcrypt.GenerateFromPassword([]byte(userCredentials.Password), 10)
 	newUser := storage.User{
 		Login:        userCredentials.Login,
-		Id:           "",
 		PasswordHash: pwdHash,
 	}
 
@@ -124,8 +122,14 @@ func (h *Handler) Login(w http.ResponseWriter, req *http.Request) {
 	})
 
 	token, err := claims.SignedString([]byte("secretKeycxvsdfdsfsdsdffsdsdfdsfsdfsdfsfdfsfdssfd"))
-	response, err := json.Marshal(map[string]string{"token": token})
-	// TODO: check errors
+
+	if err != nil {
+		log.Print("login: can't claim string")
+		writeErrorToResponse(&w, http.StatusBadRequest, "wrong password")
+		return
+	}
+
+	response, _ := json.Marshal(map[string]string{"token": token})
 
 	writeJsonToResponse(&w, http.StatusOK, response)
 }
@@ -164,9 +168,7 @@ func (h *Handler) AddPost(w http.ResponseWriter, req *http.Request) {
 	}
 
 	post.AuthorId = user.Id
-	post.Time = time.Now().UTC().Format(time.RFC3339)
 	(*h.s).AddPost(context.Background(), &post)
-	// TODO: time from database
 
 	resp, _ := json.Marshal(post)
 
@@ -206,9 +208,9 @@ func (h *Handler) GetUserPosts(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if size < 10 || size > 100 {
+	if size < 0 || size > 100 {
 		log.Print("getUserPosts: bad size value")
-		writeErrorToResponse(&w, http.StatusBadRequest, "10 <= size <= 100")
+		writeErrorToResponse(&w, http.StatusBadRequest, "0 <= size <= 100")
 		return
 	}
 
@@ -228,10 +230,8 @@ func (h *Handler) GetUserPosts(w http.ResponseWriter, req *http.Request) {
 		posts, nextPageToken, err = (*h.s).GetPostsFrom(context.Background(), page, userId, size)
 	}
 
-	// TODO: logger который принимает ошибку и тд
-	// TODO: specification
 	if err != nil {
-		log.Print("getUserPosts: can't get posts")
+		log.Print("getUserPosts: can't get posts %w", err)
 		writeErrorToResponse(&w, http.StatusBadRequest, "wrong url format")
 		return
 	}
