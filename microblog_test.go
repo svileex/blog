@@ -1,13 +1,13 @@
 package hw1_milestone1
 
 import (
+	"blog/internal/microblog"
+	"blog/internal/microblog/storage"
 	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"hw1-milestone1/internal/microblog"
-	"hw1-milestone1/internal/microblog/storage"
 	"io"
 	"io/ioutil"
 	"log"
@@ -38,7 +38,7 @@ var microblogApi []byte
 var ctx = context.Background()
 
 func (s *ApiSuite) SetupSuite() {
-	srv := microblog.NewMicroblogServer()
+	srv := microblog.NewMicroblogServer(os.Getenv("MONGO_URL"))
 
 	go func() {
 		srv.StartNewMicrobologServer(8081)
@@ -147,8 +147,8 @@ func registerUser(s *ApiSuite, login string) string {
 	return response.Id
 }
 
-func addPost(s *ApiSuite, postText, userIdForCheck string) storage.Post {
-	post := storage.NewPost()
+func addPost(s *ApiSuite, postText, userIdForCheck string) storage.FrontendHandlerTransferObject {
+	post := storage.NewFrontendDto()
 	post.Text = postText
 	reqRawBody, _ := json.Marshal(map[string]string{"text": postText})
 	req, err := http.NewRequest(http.MethodPost, "http://localhost:8081/api/v1/posts", bytes.NewReader(reqRawBody))
@@ -179,7 +179,7 @@ func (s *ApiSuite) TestRegisterAndCreatePost() {
 		userId = registerUser(s, "testregisterandcreatepost")
 	})
 
-	var regPost storage.Post
+	var regPost storage.FrontendHandlerTransferObject
 
 	s.Run("addPost", func() {
 		regPost = addPost(s, "not aboba", userId)
@@ -190,7 +190,7 @@ func (s *ApiSuite) TestRegisterAndCreatePost() {
 		s.Require().NoError(err)
 
 		rawRespBody, _ := io.ReadAll(resp.Body)
-		var postFromResp storage.Post
+		postFromResp := storage.NewFrontendDto()
 
 		s.Require().NoError(json.Unmarshal(rawRespBody, &postFromResp))
 		s.Require().Equal(postFromResp.AuthorId, regPost.AuthorId)
@@ -226,8 +226,6 @@ func getLastPosts(s *ApiSuite, size int, page, url string) ([]storage.Post, stri
 
 	s.Require().NoError(json.Unmarshal(rawBody, &respBody))
 
-	// s.Require().Equal(len(respBody.Posts), 3)
-
 	return respBody.Posts, respBody.NextPage, resp.StatusCode
 }
 
@@ -241,13 +239,15 @@ func (s *ApiSuite) TestUsersPosts() {
 		s.Run("addPostInUsersPosts", func() {
 			addPost(s, strconv.Itoa(i), userId)
 		})
+		time.Sleep(1 * time.Second)
+		// TODO: время в бд слишком сильно округляется 
 	}
 
 	url := fmt.Sprintf("http://localhost:8081/api/v1/users/%s/posts", userId)
 
 	s.Run("lastPosts3", func() {
 		posts, nextPage, _ := getLastPosts(s, 3, "", url)
-		s.Require().Equal(len(posts), 3)
+		s.Require().Equal(3, len(posts))
 		s.Require().Equal(posts[0].Text, "9")
 		s.Require().Equal(posts[1].Text, "8")
 		s.Require().Equal(posts[2].Text, "7")

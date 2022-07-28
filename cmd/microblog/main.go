@@ -1,10 +1,11 @@
 package main
 
 import (
-	"hw1-milestone1/internal/microblog"
+	"blog/internal/microblog"
+	"os"
 )
 
 func main() {
-	srv := microblog.NewMicroblogServer()
+	srv := microblog.NewMicroblogServer(os.Getenv("MONGO_URL"))
 	srv.StartNewMicrobologServer(8081)
 }
