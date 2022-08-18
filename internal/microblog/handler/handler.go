@@ -2,16 +2,16 @@ package handler
 
 import (
 	"blog/internal/microblog/storage"
+	"blog/internal/microblog/utils"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"log"
 	"net/http"
-	"regexp"
 	"strconv"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt"
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
@@ -25,121 +25,55 @@ func NewHandler(s *storage.Storage) *Handler {
 	return &Handler{s: s}
 }
 
-func validateUserLogin(user storage.User) error {
-	matched, err := regexp.Match(`^[a-z]+$`, []byte(user.Login))
+var (
+	registerLogger     = utils.NewErrorLogger("RegisterNewUser")
+	loginLogger        = utils.NewErrorLogger("Login")
+	addPostLogger      = utils.NewErrorLogger("AddPost")
+	getPostLogger      = utils.NewErrorLogger("GetPost")
+	getUserPostsLogger = utils.NewErrorLogger("GetUserPosts")
 
-	if !matched || err != nil {
-		return errors.New("login should match `^[a-Z]|[0-9]$`")
-	}
+	passwordSalt = "abcdefgh12345"
+)
 
-	return nil
-}
-
-func writeJsonToResponse(w *http.ResponseWriter, statusCode int, json []byte) {
-	(*w).Header().Set("Content-Type", "application/json")
-	(*w).WriteHeader(statusCode)
-	(*w).Write(json)
-}
-
-func writeErrorToResponse(w *http.ResponseWriter, statusCode int, errorMsg string) {
-	resp, _ := json.Marshal(map[string]string{"error": errorMsg})
-	writeJsonToResponse(w, statusCode, resp)
-}
-
-func (h Handler) RegisterNewUser(w http.ResponseWriter, req *http.Request) {
+// Todo: interface
+func (h *Handler) RegisterNewUser(w http.ResponseWriter, req *http.Request) {
 	reqBody, err := io.ReadAll(req.Body)
 
-	if err != nil {
-		log.Print("RegisterNewUser: can't read body")
-		writeErrorToResponse(&w, http.StatusBadRequest, "can't read body")
+	if registerLogger.CheckError(err, w, "can't read body", http.StatusBadRequest) != nil {
 		return
 	}
 
 	userCredentials, err := storage.GetCredentials(reqBody)
 
-	if err != nil {
-		log.Print("register: can't parse body. Body: " + string(reqBody))
-		writeErrorToResponse(&w, http.StatusBadRequest, "bad request body")
+	if registerLogger.CheckError(err, w, "can't parse body", http.StatusBadRequest) != nil {
 		return
 	}
 
-	pwdHash, _ := bcrypt.GenerateFromPassword([]byte(userCredentials.Password), 10)
+	pwdHash, _ := bcrypt.GenerateFromPassword([]byte(userCredentials.Password + passwordSalt), 10)
 	newUser := storage.User{
 		Login:        userCredentials.Login,
 		PasswordHash: pwdHash,
 	}
 
-	if err := validateUserLogin(newUser); err != nil {
-		log.Print("register: bad login")
-		writeErrorToResponse(&w, http.StatusBadRequest, "wrong login format")
+	validate := validator.New()
+	validate.RegisterValidation("login", utils.ValidateLogin)
+	if registerLogger.CheckError(validate.Struct(newUser), w, "wrong login fmt", http.StatusBadRequest) != nil {
 		return
 	}
 
-	if err := (*h.s).AddUser(context.Background(), &newUser); err != nil {
-		log.Print("register: can't add to user to storage")
-		writeErrorToResponse(&w, http.StatusBadRequest, "ooops storage dead")
+	err = (*h.s).AddUser(context.Background(), &newUser)
+	if registerLogger.CheckError(err, w, "something went wrong", http.StatusBadRequest) != nil {
 		return
 	}
 
 	resp, _ := json.Marshal(map[string]string{"id": newUser.Id})
-	writeJsonToResponse(&w, http.StatusOK, resp)
-}
-
-func (h *Handler) Login(w http.ResponseWriter, req *http.Request) {
-	reqBody, err := io.ReadAll(req.Body)
-
-	if err != nil {
-		log.Print("RegisterNewUser: can't read body")
-		writeErrorToResponse(&w, http.StatusBadRequest, "can't read body")
-		return
-	}
-
-	userCredentials, err := storage.GetCredentials(reqBody)
-
-	if err != nil {
-		log.Print("login: can't getCredentials. Body: " + string(reqBody))
-		writeErrorToResponse(&w, http.StatusBadRequest, "bad request body")
-		return
-	}
-
-	user, err := (*h.s).GetUserByLogin(context.Background(), userCredentials.Login)
-
-	if err != nil {
-		log.Print("login: can't find user by login")
-		writeErrorToResponse(&w, http.StatusBadRequest, "no user with this login")
-		return
-	}
-
-	if err := bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(userCredentials.Password)); err != nil {
-		log.Print("login: can't compareHash")
-		writeErrorToResponse(&w, http.StatusBadRequest, "wrong password")
-		return
-	}
-
-	claims := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.StandardClaims{
-		Issuer:    user.Login,
-		ExpiresAt: time.Now().Add(time.Hour * 1).Unix(),
-	})
-
-	token, err := claims.SignedString([]byte("secretKeycxvsdfdsfsdsdffsdsdfdsfsdfsdfsfdfsfdssfd"))
-
-	if err != nil {
-		log.Print("login: can't claim string")
-		writeErrorToResponse(&w, http.StatusBadRequest, "wrong password")
-		return
-	}
-
-	response, _ := json.Marshal(map[string]string{"token": token})
-
-	writeJsonToResponse(&w, http.StatusOK, response)
+	utils.WriteJsonToResponse(w, http.StatusOK, resp)
 }
 
 func (h *Handler) AddPost(w http.ResponseWriter, req *http.Request) {
 	reqBody, err := io.ReadAll(req.Body)
 
-	if err != nil {
-		log.Print("RegisterNewUser: can't read body")
-		writeErrorToResponse(&w, http.StatusBadRequest, "can't read body")
+	if addPostLogger.CheckError(err, w, "can't read body", http.StatusBadRequest) != nil {
 		return
 	}
 
@@ -147,23 +81,20 @@ func (h *Handler) AddPost(w http.ResponseWriter, req *http.Request) {
 
 	if !exist || len(reqUserId) != 1 {
 		log.Print("addPost: wrong id format")
-		writeErrorToResponse(&w, http.StatusUnauthorized, "wrong id format")
+		utils.WriteErrorToResponse(w, http.StatusUnauthorized, "wrong id format")
 		return
 	}
 
 	user, err := (*h.s).GetUserById(context.Background(), reqUserId[0])
 
-	if err != nil {
-		log.Print("addPost: no user with this id")
-		writeErrorToResponse(&w, http.StatusUnauthorized, "no user with this id")
+	if addPostLogger.CheckError(err, w, "user not found", http.StatusUnauthorized) != nil {
 		return
 	}
 
 	var post storage.Post
+	err = json.Unmarshal(reqBody, &post)
 
-	if json.Unmarshal(reqBody, &post) != nil {
-		log.Print("addPost: can't parse body")
-		writeErrorToResponse(&w, http.StatusBadRequest, "wrong post format")
+	if addPostLogger.CheckError(err, w, "wrong format", http.StatusBadRequest) != nil {
 		return
 	}
 
@@ -172,28 +103,27 @@ func (h *Handler) AddPost(w http.ResponseWriter, req *http.Request) {
 
 	resp, _ := json.Marshal(post)
 
-	writeJsonToResponse(&w, http.StatusOK, resp)
+	utils.WriteJsonToResponse(w, http.StatusOK, resp)
 }
 
+// нужен ли указатель?
 func (h *Handler) GetPost(w http.ResponseWriter, req *http.Request) {
 	postId, ex := mux.Vars(req)["postId"]
 
 	if !ex {
 		log.Print("getPost: bad post id")
-		writeErrorToResponse(&w, http.StatusNotFound, "bad post id")
+		utils.WriteErrorToResponse(w, http.StatusNotFound, "bad post id")
 		return
 	}
 
 	post, err := (*h.s).GetPost(context.Background(), postId)
 
-	if err != nil {
-		log.Print("getPost: post not found")
-		writeErrorToResponse(&w, http.StatusNotFound, "post not found")
+	if getPostLogger.CheckError(err, w, "post not found", http.StatusNotFound) != nil {
 		return
 	}
 
 	resp, _ := json.Marshal(post)
-	writeJsonToResponse(&w, http.StatusOK, resp)
+	utils.WriteJsonToResponse(w, http.StatusOK, resp)
 }
 
 func (h *Handler) GetUserPosts(w http.ResponseWriter, req *http.Request) {
@@ -202,22 +132,20 @@ func (h *Handler) GetUserPosts(w http.ResponseWriter, req *http.Request) {
 
 	if req.FormValue("size") == "" {
 		size = 10
-	} else if err != nil {
-		log.Print("getUserPosts: size must be number")
-		writeErrorToResponse(&w, http.StatusBadRequest, "size must be numer")
+	} else if getUserPostsLogger.CheckError(err, w, "size must be numer", http.StatusBadRequest) != nil {
 		return
 	}
 
 	if size < 0 || size > 100 {
 		log.Print("getUserPosts: bad size value")
-		writeErrorToResponse(&w, http.StatusBadRequest, "0 <= size <= 100")
+		utils.WriteErrorToResponse(w, http.StatusBadRequest, "0 <= size <= 100")
 		return
 	}
 
 	userId, ex := mux.Vars(req)["userId"]
 	if !ex {
 		log.Print("getUserPosts: wrong url format")
-		writeErrorToResponse(&w, http.StatusBadRequest, "wrong url format")
+		utils.WriteErrorToResponse(w, http.StatusBadRequest, "wrong url format")
 		return
 	}
 
@@ -230,19 +158,57 @@ func (h *Handler) GetUserPosts(w http.ResponseWriter, req *http.Request) {
 		posts, nextPageToken, err = (*h.s).GetPostsFrom(context.Background(), page, userId, size)
 	}
 
-	if err != nil {
-		log.Print("getUserPosts: can't get posts %w", err)
-		writeErrorToResponse(&w, http.StatusBadRequest, "wrong url format")
+	if getUserPostsLogger.CheckError(err, w, "wrong url format", http.StatusBadRequest) != nil {
 		return
 	}
 
-	var mapForResponse map[string]interface{}
-	if nextPageToken == "" {
-		mapForResponse = map[string]interface{}{"posts": posts}
-	} else {
-		mapForResponse = map[string]interface{}{"posts": posts, "nextPage": nextPageToken}
+	mapForResponse := map[string]interface{}{"posts": posts}
+
+	if nextPageToken != "" {
+		mapForResponse["nextPage"] = nextPageToken
 	}
 
 	resp, _ := json.Marshal(mapForResponse)
-	writeJsonToResponse(&w, http.StatusOK, resp)
+	utils.WriteJsonToResponse(w, http.StatusOK, resp)
+}
+
+// TODO: messages in errors
+func (h *Handler) Login(w http.ResponseWriter, req *http.Request) {
+	reqBody, err := io.ReadAll(req.Body)
+
+	if loginLogger.CheckError(err, w, "can't read body", http.StatusBadRequest) != nil {
+		return
+	}
+
+	userCredentials, err := storage.GetCredentials(reqBody)
+
+	if loginLogger.CheckError(err, w, "can't can't getCredentials", http.StatusBadRequest) != nil {
+		return
+	}
+
+	user, err := (*h.s).GetUserByLogin(context.Background(), userCredentials.Login)
+
+	if loginLogger.CheckError(err, w, "user not found", http.StatusBadRequest) != nil {
+		return
+	}
+
+	err = bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(userCredentials.Password))
+	if loginLogger.CheckError(err, w, "wrong password", http.StatusBadRequest) != nil {
+		return
+	}
+
+	claims := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.StandardClaims{
+		Issuer:    user.Login,
+		ExpiresAt: time.Now().Add(time.Hour * 1).Unix(),
+	})
+
+	token, err := claims.SignedString([]byte("secretKeycxvsdfdsfsdsdffsdsdfdsfsdfsdfsfdfsfdssfd"))
+
+	if loginLogger.CheckError(err, w, "wrong password", http.StatusBadRequest) != nil {
+		return
+	}
+
+	response, _ := json.Marshal(map[string]string{"token": token})
+
+	utils.WriteJsonToResponse(w, http.StatusOK, response)
 }
