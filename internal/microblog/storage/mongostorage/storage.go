@@ -26,7 +26,7 @@ func NewMongoStorage(mongoUrl string) (storage.Storage, error) {
 	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(mongoUrl))
 
 	if err != nil {
-		return nil, fmt.Errorf("agboba can't connect to mongo - %w", err)
+		return nil, fmt.Errorf("can't connect to mongo - %w", err)
 	}
 
 	posts := client.Database(dbName).Collection("posts")
